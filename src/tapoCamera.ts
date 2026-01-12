@@ -14,6 +14,7 @@ import type {
   TAPOCameraSetRequest,
 } from "./types/tapo";
 import { Agent } from "undici";
+import { constants as cryptoConstants } from "crypto";
 
 const MAX_LOGIN_RETRIES = 2;
 const AES_BLOCK_SIZE = 16;
@@ -69,7 +70,12 @@ export class TAPOCamera extends OnvifCamera {
       connect: {
         // TAPO devices have self-signed certificates
         rejectUnauthorized: false,
-        ciphers: "AES256-SHA:AES128-GCM-SHA256",
+        // Support legacy RSA 1024-bit certificates by including compatible cipher suites
+        ciphers: "AES256-SHA:AES128-GCM-SHA256:AES128-SHA:DES-CBC3-SHA:RC4-SHA:RC4-MD5",
+        // Allow TLS 1.0 and above for legacy certificate support
+        minVersion: "TLSv1" as const,
+        // Disable strict certificate validation to support legacy certificates
+        secureOptions: cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT,
       },
     });
 
