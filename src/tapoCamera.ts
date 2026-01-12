@@ -120,6 +120,12 @@ export class TAPOCamera extends OnvifCamera {
     };
   }
 
+  private async getBaseURL() {
+    const isSecure = await this.isSecureConnection();
+    const protocol = isSecure ? "https" : "http";
+    return `${protocol}://${this.config.ipAddress}`;
+  }
+
   private getHashedPassword() {
     if (this.passwordEncryptionMethod === "md5") {
       return this.hashedPassword;
@@ -202,6 +208,7 @@ export class TAPOCamera extends OnvifCamera {
     this.log.debug("refreshStok: Refreshing stok...");
 
     const isSecureConnection = await this.isSecureConnection();
+    const baseURL = await this.getBaseURL();
 
     let fetchParams = {};
     if (isSecureConnection) {
@@ -230,10 +237,7 @@ export class TAPOCamera extends OnvifCamera {
       };
     }
 
-    const responseLogin = await this.fetch(
-      `https://${this.config.ipAddress}`,
-      fetchParams
-    );
+    const responseLogin = await this.fetch(baseURL, fetchParams);
     const responseLoginData =
       (await responseLogin.json()) as TAPOCameraRefreshStokResponse;
 
@@ -286,7 +290,7 @@ export class TAPOCamera extends OnvifCamera {
 
         this.log.debug("refreshStok: sending start_seq request");
 
-        response = await this.fetch(`https://${this.config.ipAddress}`, {
+        response = await this.fetch(baseURL, {
           method: "POST",
           body: JSON.stringify({
             method: "login",
@@ -464,7 +468,8 @@ export class TAPOCamera extends OnvifCamera {
 
   private async getAuthenticatedAPIURL(loginRetryCount = 0) {
     const token = await this.getStok(loginRetryCount);
-    return `https://${this.config.ipAddress}/stok=${token}/ds`;
+    const baseURL = await this.getBaseURL();
+    return `${baseURL}/stok=${token}/ds`;
   }
 
   encryptRequest(request: string) {
