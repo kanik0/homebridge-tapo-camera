@@ -74,12 +74,17 @@ export class TAPOCamera extends OnvifCamera {
         // with older TAPO cameras. These are only used when connecting to local devices
         // on a private network and should not be used for internet-facing connections.
         ciphers:
-          "AES256-SHA:AES128-GCM-SHA256:AES128-SHA:DES-CBC3-SHA:RC4-SHA:RC4-MD5",
-        // Allow TLS 1.0 and above for legacy certificate support
+          "AES256-SHA:AES128-GCM-SHA256:AES128-SHA:DES-CBC3-SHA:RC4-SHA:RC4-MD5:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA",
+        // Force TLS 1.0 protocol for maximum compatibility with legacy devices
         // WARNING: TLS 1.0 has known vulnerabilities but may be required for older cameras
+        secureProtocol: "TLS_method" as const,
         minVersion: "TLSv1" as const,
         // Disable strict certificate validation to support legacy certificates
-        secureOptions: cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT,
+        secureOptions:
+          cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT |
+          cryptoConstants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION,
+        // Allow legacy signature algorithms for RSA 1024-bit support
+        sigalgs: "RSA+SHA256:RSA+SHA1:ECDSA+SHA256:ECDSA+SHA1",
       },
     });
 
@@ -397,27 +402,37 @@ export class TAPOCamera extends OnvifCamera {
     if (this.isSecureConnectionValue === null) {
       this.log.debug("isSecureConnection: Checking secure connection...");
 
-      const response = await this.fetch(`https://${this.config.ipAddress}`, {
-        method: "post",
-        body: JSON.stringify({
-          method: "login",
-          params: {
-            encrypt_type: "3",
-            username: this.getUsername(),
-          },
-        }),
-      });
-      const responseData = (await response.json()) as TAPOCameraLoginResponse;
+      try {
+        const response = await this.fetch(`https://${this.config.ipAddress}`, {
+          method: "post",
+          body: JSON.stringify({
+            method: "login",
+            params: {
+              encrypt_type: "3",
+              username: this.getUsername(),
+            },
+          }),
+        });
+        const responseData =
+          (await response.json()) as TAPOCameraLoginResponse;
 
-      this.log.debug(
-        "isSecureConnection response",
-        response.status,
-        JSON.stringify(responseData)
-      );
+        this.log.debug(
+          "isSecureConnection response",
+          response.status,
+          JSON.stringify(responseData)
+        );
 
-      this.isSecureConnectionValue =
-        responseData?.error_code == -40413 &&
-        String(responseData.result?.data?.encrypt_type || "")?.includes("3");
+        this.isSecureConnectionValue =
+          responseData?.error_code == -40413 &&
+          String(responseData.result?.data?.encrypt_type || "")?.includes("3");
+      } catch (error) {
+        // If TLS handshake fails (e.g., with legacy certificates), fall back to insecure connection
+        this.log.warn(
+          "isSecureConnection: TLS handshake failed, assuming insecure connection mode",
+          error
+        );
+        this.isSecureConnectionValue = false;
+      }
     }
 
     return this.isSecureConnectionValue;
