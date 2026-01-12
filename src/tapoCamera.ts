@@ -1,6 +1,6 @@
 import { Logging } from "homebridge";
 import { CameraConfig } from "./cameraAccessory";
-import crypto from "crypto";
+import crypto, { constants as cryptoConstants } from "crypto";
 import { OnvifCamera } from "./onvifCamera";
 import type {
   TAPOBasicInfo,
@@ -14,7 +14,6 @@ import type {
   TAPOCameraSetRequest,
 } from "./types/tapo";
 import { Agent } from "undici";
-import { constants as cryptoConstants } from "crypto";
 
 const MAX_LOGIN_RETRIES = 2;
 const AES_BLOCK_SIZE = 16;
@@ -71,8 +70,13 @@ export class TAPOCamera extends OnvifCamera {
         // TAPO devices have self-signed certificates
         rejectUnauthorized: false,
         // Support legacy RSA 1024-bit certificates by including compatible cipher suites
-        ciphers: "AES256-SHA:AES128-GCM-SHA256:AES128-SHA:DES-CBC3-SHA:RC4-SHA:RC4-MD5",
+        // WARNING: This includes weak/deprecated ciphers (RC4, 3DES) for compatibility
+        // with older TAPO cameras. These are only used when connecting to local devices
+        // on a private network and should not be used for internet-facing connections.
+        ciphers:
+          "AES256-SHA:AES128-GCM-SHA256:AES128-SHA:DES-CBC3-SHA:RC4-SHA:RC4-MD5",
         // Allow TLS 1.0 and above for legacy certificate support
+        // WARNING: TLS 1.0 has known vulnerabilities but may be required for older cameras
         minVersion: "TLSv1" as const,
         // Disable strict certificate validation to support legacy certificates
         secureOptions: cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT,
