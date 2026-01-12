@@ -1,6 +1,6 @@
 import { Logging } from "homebridge";
 import { CameraConfig } from "./cameraAccessory";
-import crypto from "crypto";
+import crypto, { constants as cryptoConstants } from "crypto";
 import { OnvifCamera } from "./onvifCamera";
 import type {
   TAPOBasicInfo,
@@ -69,7 +69,23 @@ export class TAPOCamera extends OnvifCamera {
       connect: {
         // TAPO devices have self-signed certificates
         rejectUnauthorized: false,
-        ciphers: "AES256-SHA:AES128-GCM-SHA256",
+        // Support legacy RSA 1024-bit certificates by including compatible cipher suites
+        // WARNING: This includes weak/deprecated ciphers (RC4, 3DES) for compatibility
+        // with older TAPO cameras. These are only used when connecting to local devices
+        // on a private network and should not be used for internet-facing connections.
+        ciphers:
+          "AES256-SHA:AES128-GCM-SHA256:AES128-SHA:DES-CBC3-SHA:RC4-SHA:RC4-MD5:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA",
+        // Use TLS_method to enable automatic TLS version negotiation between client and server
+        // This allows the connection to negotiate down to TLS 1.0 if needed for legacy devices
+        // WARNING: This allows TLS 1.0 which has known vulnerabilities but may be required for older cameras
+        secureProtocol: "TLS_method" as const,
+        // Note: Node.js requires using either secureProtocol OR minVersion/maxVersion, not both
+        // Disable strict certificate validation to support legacy certificates
+        secureOptions:
+          cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT |
+          cryptoConstants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION,
+        // Allow legacy signature algorithms for RSA 1024-bit support
+        sigalgs: "RSA+SHA256:RSA+SHA1:ECDSA+SHA256:ECDSA+SHA1",
       },
     });
 
@@ -102,6 +118,13 @@ export class TAPOCamera extends OnvifCamera {
       requestByApp: "true",
       "Content-Type": "application/json; charset=UTF-8",
     };
+  }
+
+  private async getBaseURL() {
+    // isSecureConnection() result is cached, so this is efficient
+    const isSecure = await this.isSecureConnection();
+    const protocol = isSecure ? "https" : "http";
+    return `${protocol}://${this.config.ipAddress}`;
   }
 
   private getHashedPassword() {
@@ -186,6 +209,7 @@ export class TAPOCamera extends OnvifCamera {
     this.log.debug("refreshStok: Refreshing stok...");
 
     const isSecureConnection = await this.isSecureConnection();
+    const baseURL = await this.getBaseURL();
 
     let fetchParams = {};
     if (isSecureConnection) {
@@ -214,10 +238,7 @@ export class TAPOCamera extends OnvifCamera {
       };
     }
 
-    const responseLogin = await this.fetch(
-      `https://${this.config.ipAddress}`,
-      fetchParams
-    );
+    const responseLogin = await this.fetch(baseURL, fetchParams);
     const responseLoginData =
       (await responseLogin.json()) as TAPOCameraRefreshStokResponse;
 
@@ -270,7 +291,7 @@ export class TAPOCamera extends OnvifCamera {
 
         this.log.debug("refreshStok: sending start_seq request");
 
-        response = await this.fetch(`https://${this.config.ipAddress}`, {
+        response = await this.fetch(baseURL, {
           method: "POST",
           body: JSON.stringify({
             method: "login",
@@ -387,27 +408,37 @@ export class TAPOCamera extends OnvifCamera {
     if (this.isSecureConnectionValue === null) {
       this.log.debug("isSecureConnection: Checking secure connection...");
 
-      const response = await this.fetch(`https://${this.config.ipAddress}`, {
-        method: "post",
-        body: JSON.stringify({
-          method: "login",
-          params: {
-            encrypt_type: "3",
-            username: this.getUsername(),
-          },
-        }),
-      });
-      const responseData = (await response.json()) as TAPOCameraLoginResponse;
+      try {
+        const response = await this.fetch(`https://${this.config.ipAddress}`, {
+          method: "post",
+          body: JSON.stringify({
+            method: "login",
+            params: {
+              encrypt_type: "3",
+              username: this.getUsername(),
+            },
+          }),
+        });
+        const responseData =
+          (await response.json()) as TAPOCameraLoginResponse;
 
-      this.log.debug(
-        "isSecureConnection response",
-        response.status,
-        JSON.stringify(responseData)
-      );
+        this.log.debug(
+          "isSecureConnection response",
+          response.status,
+          JSON.stringify(responseData)
+        );
 
-      this.isSecureConnectionValue =
-        responseData?.error_code == -40413 &&
-        String(responseData.result?.data?.encrypt_type || "")?.includes("3");
+        this.isSecureConnectionValue =
+          responseData?.error_code == -40413 &&
+          String(responseData.result?.data?.encrypt_type || "")?.includes("3");
+      } catch (error) {
+        // If TLS handshake fails (e.g., with legacy certificates), fall back to insecure connection
+        this.log.warn(
+          "isSecureConnection: TLS handshake failed, assuming insecure connection mode",
+          error
+        );
+        this.isSecureConnectionValue = false;
+      }
     }
 
     return this.isSecureConnectionValue;
@@ -438,7 +469,8 @@ export class TAPOCamera extends OnvifCamera {
 
   private async getAuthenticatedAPIURL(loginRetryCount = 0) {
     const token = await this.getStok(loginRetryCount);
-    return `https://${this.config.ipAddress}/stok=${token}/ds`;
+    const baseURL = await this.getBaseURL();
+    return `${baseURL}/stok=${token}/ds`;
   }
 
   encryptRequest(request: string) {
