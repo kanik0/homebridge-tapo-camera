@@ -121,6 +121,7 @@ export class TAPOCamera extends OnvifCamera {
   }
 
   private async getBaseURL() {
+    // isSecureConnection() result is cached, so this is efficient
     const isSecure = await this.isSecureConnection();
     const protocol = isSecure ? "https" : "http";
     return `${protocol}://${this.config.ipAddress}`;
