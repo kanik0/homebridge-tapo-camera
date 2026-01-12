@@ -75,10 +75,11 @@ export class TAPOCamera extends OnvifCamera {
         // on a private network and should not be used for internet-facing connections.
         ciphers:
           "AES256-SHA:AES128-GCM-SHA256:AES128-SHA:DES-CBC3-SHA:RC4-SHA:RC4-MD5:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA",
-        // Use TLS_method to enable TLS protocol negotiation (allows TLS 1.0+)
+        // Use TLS_method to enable automatic TLS version negotiation between client and server
+        // This allows the connection to negotiate down to TLS 1.0 if needed for legacy devices
         // WARNING: This allows TLS 1.0 which has known vulnerabilities but may be required for older cameras
         secureProtocol: "TLS_method" as const,
-        // Note: minVersion/maxVersion cannot be used with secureProtocol
+        // Note: Node.js requires using either secureProtocol OR minVersion/maxVersion, not both
         // Disable strict certificate validation to support legacy certificates
         secureOptions:
           cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT |
